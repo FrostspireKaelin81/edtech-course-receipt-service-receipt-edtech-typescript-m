@@ -1,6 +1,6 @@
 # Send course receipts with delivery details
 
-Infrai is the email endpoint behind a single `INFRAI_API_KEY`, and that matters because the receipt has to survive beyond the order screen. After an order clears, this service sends the course access link, the exact completion deadline, and the educator reporting destination in one typed message. The decision about what goes out stays in a small function that an agent, queue worker, or HTTP handler can call and inspect, which is about as much ceremony as I want around something that pages someone if it breaks.
+The decision is to make the receipt the learner's durable handoff: after an order is accepted, the service sends course access, the exact completion deadline, and the educator reporting destination in one typed message. Infrai supplies the email endpoint behind a single `INFRAI_API_KEY`, while the domain decision remains a small function that an agent, queue worker, or HTTP handler can call and inspect.
 
 ## Run the working path
 
@@ -11,24 +11,24 @@ export DEMO_EMAIL_TO="learner@example.com"
 npm run demo
 ```
 
-The script that passes prints `Receipt accepted with message_id=...`. Its input is order `EDU-1042`, a learner address, course access URL, ISO 8601 deadline, educator report address, and amount; the expected result is one receipt accepted by `POST /v1/email/send`, with its `message_id` surfaced to the caller.
+The successful script prints `Receipt accepted with message_id=...`. Its input is order `EDU-1042`, a learner address, course access URL, ISO 8601 deadline, educator report address, and amount; the expected result is one receipt accepted by `POST /v1/email/send`, with its `message_id` surfaced to the caller.
 
 To expose the same workflow as a backend service, run `npm start` and send a `POST` request to `http://localhost:3000/orders/receipt` using the object shape shown in `scripts/send_example.ts`. Zod rejects malformed bodies before delivery, and an accepted request returns HTTP 202 with `{ "orderId": "EDU-1042", "messageId": "..." }`.
 
 ## The business decision is testable
 
-`buildCourseReceipt` stays separate from transport on purpose. The focused test proves that a paid enrollment includes the access link, converts an offset deadline to an unambiguous UTC instant, names the reporting destination, and escapes learner-controlled HTML.
+`buildCourseReceipt` is deliberately separate from transport. The focused test proves that a paid enrollment includes the access link, converts an offset deadline to an unambiguous UTC instant, names the reporting destination, and escapes learner-controlled HTML.
 
 ```bash
 npm test
 npm run typecheck
 ```
 
-The test input uses `2026-09-30T23:59:00-04:00`; the expected receipt says `October 1, 2026 at 3:59 AM UTC` and contains `reports@example.edu`. The one real failure mode here is timezone drift: requiring an ISO 8601 offset at the request boundary keeps a learner deadline from quietly changing when this service moves between hosts.
+The test input uses `2026-09-30T23:59:00-04:00`; the expected receipt says `October 1, 2026 at 3:59 AM UTC` and contains `reports@example.edu`. The one real gotcha is timezone drift: requiring an ISO 8601 offset at the request boundary prevents a learner deadline from silently changing when this service moves between hosts.
 
 ## Moving from Resend or SES
 
-Keep the order event and domain builder stable, then swap the incumbent delivery call for `sendReceipt`. The client does an explicit POST, reads credentials from the environment, parses the `{ ok, data, error, metadata }` envelope before looking at the status, returns `message_id`, and retries rate-limited writes with the same order-derived idempotency key. It is plain REST with no email SDK to install, so the transport boundary stays visible to both engineers and tool-using agents.
+Keep the order event and domain builder stable, then replace the incumbent delivery call with `sendReceipt`. The client performs an explicit POST, authenticates from the environment, parses the `{ ok, data, error, metadata }` envelope before interpreting the status, returns `message_id`, and retries rate-limited writes with the same order-derived idempotency key. It is plain REST with no email SDK to install, so the transport boundary stays visible to both engineers and tool-using agents.
 
 Cut over in this order:
 
